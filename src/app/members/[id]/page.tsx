@@ -92,6 +92,10 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                             <span className="info-value">{member.contact || '-'}</span>
                         </div>
                         <div className="info-item">
+                            <span className="info-label">住所</span>
+                            <span className="info-value">{member.address || '-'}</span>
+                        </div>
+                        <div className="info-item">
                             <span className="info-label">登録日</span>
                             <span className="info-value">{formatDate(member.created_at)}</span>
                         </div>

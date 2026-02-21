@@ -16,10 +16,11 @@ type MemberFormData = {
     furigana: string;
     position: string;
     contact: string;
+    address: string;
     status: string;
 };
 
-const emptyForm: MemberFormData = { name: '', furigana: '', position: '', contact: '', status: 'active' };
+const emptyForm: MemberFormData = { name: '', furigana: '', position: '', contact: '', address: '', status: 'active' };
 
 export default function MembersPage() {
     const [members, setMembers] = useState<Member[]>([]);
@@ -63,6 +64,7 @@ export default function MembersPage() {
             furigana: member.furigana,
             position: member.position,
             contact: member.contact,
+            address: member.address,
             status: member.status,
         });
         setShowModal(true);
@@ -142,6 +144,7 @@ export default function MembersPage() {
                                 <th>ふりがな</th>
                                 <th>ポジション</th>
                                 <th>連絡先</th>
+                                <th>住所</th>
                                 <th>在籍状態</th>
                                 <th>登録日</th>
                                 <th></th>
@@ -150,7 +153,7 @@ export default function MembersPage() {
                         <tbody>
                             {filteredMembers.length === 0 ? (
                                 <tr>
-                                    <td colSpan={7}>
+                                    <td colSpan={8}>
                                         <div className="empty-state">
                                             <div className="empty-state-icon">👥</div>
                                             <div className="empty-state-text">部員が登録されていません</div>
@@ -168,6 +171,7 @@ export default function MembersPage() {
                                         <td className="text-muted">{member.furigana}</td>
                                         <td>{member.position || '-'}</td>
                                         <td className="text-muted">{member.contact || '-'}</td>
+                                        <td className="text-muted">{member.address || '-'}</td>
                                         <td>
                                             <span className={`badge ${member.status === 'active' ? 'badge-green' : 'badge-gray'}`}>
                                                 {member.status === 'active' ? '在籍' : '退部'}
@@ -234,6 +238,15 @@ export default function MembersPage() {
                                         placeholder="example@email.com"
                                     />
                                 </div>
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">住所</label>
+                                <input
+                                    className="form-input"
+                                    value={form.address}
+                                    onChange={e => setForm({ ...form, address: e.target.value })}
+                                    placeholder="東京都渋谷区..."
+                                />
                             </div>
                             {editingId && (
                                 <div className="form-group">

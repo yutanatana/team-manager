@@ -1,101 +1,126 @@
 'use server';
 
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase-server';
 import type { Payment } from '@/types/database';
 
-// 特定の徴収イベントに紐づく支払い記録を取得（部員情報付き）
-export async function getPaymentsByFeeEvent(feeEventId: string): Promise<Payment[]> {
+// team_id 取得ヘルパー
+async function getTeamId(): Promise<string> {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('未認証です');
+    const { data: profile } = await supabase
+        .from('profiles').select('team_id').eq('id', user.id).single();
+    if (!profile?.team_id) throw new Error('チームに所属していません');
+    return profile.team_id;
+}
+
+// 管理者権限チェック
+async function requireAdmin() {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('未認証です');
+    const { data: profile } = await supabase
+        .from('profiles').select('role').eq('id', user.id).single();
+    if (profile?.role !== 'admin') throw new Error('管理者権限が必要です');
+}
+
+// 全支払い記録（チーム内）
+export async function getAllPayments(): Promise<Payment[]> {
+    const supabase = await createClient();
+    const teamId = await getTeamId();
     const { data, error } = await supabase
         .from('payments')
-        .select('*, member:members(*)')
-        .eq('fee_event_id', feeEventId)
-        .order('member_id');
-
+        .select('*, member:members(*), fee_event:fee_events(*)')
+        .eq('team_id', teamId);
     if (error) throw new Error(`支払い記録の取得に失敗: ${error.message}`);
     return data || [];
 }
 
-// 特定の部員の支払い履歴を取得（イベント情報付き）
-export async function getPaymentsByMember(memberId: string): Promise<Payment[]> {
+// 徴収イベント単位の支払い一覧
+export async function getPaymentsByFeeEvent(feeEventId: string): Promise<Payment[]> {
+    const supabase = await createClient();
+    const teamId = await getTeamId();
     const { data, error } = await supabase
         .from('payments')
-        .select('*, fee_event:fee_events(*)')
-        .eq('member_id', memberId)
-        .order('fee_event_id');
+        .select('*, member:members(*), fee_event:fee_events(*)')
+        .eq('fee_event_id', feeEventId)
+        .eq('team_id', teamId);
+    if (error) throw new Error(`支払い記録の取得に失敗: ${error.message}`);
+    return data || [];
+}
 
+// 部員単位の支払い履歴
+export async function getPaymentsByMember(memberId: string): Promise<Payment[]> {
+    const supabase = await createClient();
+    const teamId = await getTeamId();
+    const { data, error } = await supabase
+        .from('payments')
+        .select('*, member:members(*), fee_event:fee_events(*)')
+        .eq('member_id', memberId)
+        .eq('team_id', teamId);
     if (error) throw new Error(`支払い履歴の取得に失敗: ${error.message}`);
     return data || [];
 }
 
-// 全支払い記録を取得
-export async function getAllPayments(): Promise<Payment[]> {
-    const { data, error } = await supabase
-        .from('payments')
-        .select('*, member:members(*), fee_event:fee_events(*)');
+// 徴収イベント作成時に全部員分の支払いレコードを一括生成（管理者のみ）
+export async function createPaymentsForFeeEvent(feeEventId: string): Promise<void> {
+    await requireAdmin();
+    const supabase = await createClient();
+    const teamId = await getTeamId();
 
-    if (error) throw new Error(`支払い記録の取得に失敗: ${error.message}`);
-    return data || [];
-}
-
-// 徴収イベントに対して全在籍部員の支払いレコードを一括作成
-export async function createPaymentsForEvent(feeEventId: string): Promise<void> {
-    // 在籍中の部員を取得
     const { data: members, error: membersError } = await supabase
         .from('members')
         .select('id')
+        .eq('team_id', teamId)
         .eq('status', 'active');
 
-    if (membersError) throw new Error(`部員の取得に失敗: ${membersError.message}`);
-    if (!members || members.length === 0) return;
+    if (membersError) throw new Error(`部員取得に失敗: ${membersError.message}`);
+    if (!members?.length) return;
 
-    // 既存の支払いレコードを確認
-    const { data: existingPayments } = await supabase
-        .from('payments')
-        .select('member_id')
-        .eq('fee_event_id', feeEventId);
+    const records = members.map(m => ({
+        team_id: teamId,
+        member_id: m.id,
+        fee_event_id: feeEventId,
+        status: 'unpaid',
+    }));
 
-    const existingMemberIds = new Set((existingPayments || []).map(p => p.member_id));
-
-    // 未作成の部員に対してレコードを作成
-    const newPayments = members
-        .filter(m => !existingMemberIds.has(m.id))
-        .map(m => ({
-            member_id: m.id,
-            fee_event_id: feeEventId,
-            status: 'unpaid' as const,
-            paid_at: null,
-            method: null,
-            note: '',
-        }));
-
-    if (newPayments.length === 0) return;
-
-    const { error } = await supabase.from('payments').insert(newPayments);
-    if (error) throw new Error(`支払いレコードの一括作成に失敗: ${error.message}`);
+    const { error } = await supabase.from('payments').upsert(records, {
+        onConflict: 'member_id,fee_event_id',
+        ignoreDuplicates: true,
+    });
+    if (error) throw new Error(`支払いレコード生成に失敗: ${error.message}`);
 }
 
-// 支払い状態を更新
+// 支払い状況を更新（管理者のみ）
 export async function updatePaymentStatus(
-    id: string,
-    data: {
-        status: 'unpaid' | 'paid';
-        paid_at?: string | null;
-        method?: 'cash' | 'transfer' | 'other' | null;
-        note?: string;
-    }
+    paymentId: string,
+    status: 'paid' | 'unpaid',
+    method?: string,
+    note?: string
 ): Promise<Payment> {
-    const { data: updated, error } = await supabase
+    await requireAdmin();
+    const supabase = await createClient();
+    const teamId = await getTeamId();
+
+    const updateData: Record<string, unknown> = { status };
+    if (status === 'paid') {
+        updateData.paid_at = new Date().toISOString();
+        updateData.method = method ?? 'cash';
+        updateData.note = note ?? '';
+    } else {
+        updateData.paid_at = null;
+        updateData.method = null;
+        updateData.note = '';
+    }
+
+    const { data, error } = await supabase
         .from('payments')
-        .update({
-            status: data.status,
-            paid_at: data.status === 'paid' ? (data.paid_at || new Date().toISOString().split('T')[0]) : null,
-            method: data.status === 'paid' ? (data.method || null) : null,
-            note: data.note || '',
-        })
-        .eq('id', id)
+        .update(updateData)
+        .eq('id', paymentId)
+        .eq('team_id', teamId)
         .select()
         .single();
 
-    if (error) throw new Error(`支払い状態の更新に失敗: ${error.message}`);
-    return updated;
+    if (error || !data) throw new Error(`支払い状況の更新に失敗: ${error?.message}`);
+    return data;
 }

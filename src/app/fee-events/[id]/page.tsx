@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, use } from 'react';
 import Link from 'next/link';
 import { getFeeEvent } from '../../actions/fee-events';
-import { getPaymentsByFeeEvent, createPaymentsForEvent, updatePaymentStatus } from '../../actions/payments';
+import { getPaymentsByFeeEvent, createPaymentsForFeeEvent, updatePaymentStatus } from '../../actions/payments';
 import type { FeeEvent, Payment, Member } from '@/types/database';
 
 function formatDate(dateStr: string): string {
@@ -44,7 +44,7 @@ export default function FeeEventDetailPage({ params }: { params: Promise<{ id: s
     // 支払いレコードの一括生成
     const handleGeneratePayments = async () => {
         try {
-            await createPaymentsForEvent(resolvedParams.id);
+            await createPaymentsForFeeEvent(resolvedParams.id);
             loadData();
         } catch (err) {
             console.error('一括生成エラー:', err);
@@ -66,12 +66,12 @@ export default function FeeEventDetailPage({ params }: { params: Promise<{ id: s
         if (!showPayModal) return;
         setUpdatingId(showPayModal.id);
         try {
-            await updatePaymentStatus(showPayModal.id, {
-                status: 'paid',
-                paid_at: payForm.paid_at,
-                method: payForm.method as 'cash' | 'transfer' | 'other',
-                note: payForm.note,
-            });
+            await updatePaymentStatus(
+                showPayModal.id,
+                'paid',
+                payForm.method as 'cash' | 'transfer' | 'other',
+                payForm.note
+            );
             setShowPayModal(null);
             loadData();
         } catch (err) {
@@ -86,7 +86,7 @@ export default function FeeEventDetailPage({ params }: { params: Promise<{ id: s
     const handleMarkUnpaid = async (payment: Payment) => {
         setUpdatingId(payment.id);
         try {
-            await updatePaymentStatus(payment.id, { status: 'unpaid' });
+            await updatePaymentStatus(payment.id, 'unpaid');
             loadData();
         } catch (err) {
             console.error('更新エラー:', err);

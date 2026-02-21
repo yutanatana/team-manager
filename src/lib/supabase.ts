@@ -1,7 +1,9 @@
-import { createClient } from '@supabase/supabase-js';
+// ブラウザ（クライアント）側の Supabase クライアント
+import { createBrowserClient } from '@supabase/ssr';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-// Supabase クライアント（型の自動推論を避けるため非ジェネリック）
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export function createClient() {
+    return createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+}

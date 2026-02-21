@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { getFeeEvents, createFeeEvent, updateFeeEvent, deleteFeeEvent } from '../actions/fee-events';
-import { createPaymentsForEvent } from '../actions/payments';
+import { createPaymentsForFeeEvent } from '../actions/payments';
 import type { FeeEvent } from '@/types/database';
 
 function formatDate(dateStr: string): string {
@@ -84,7 +84,7 @@ export default function FeeEventsPage() {
                     note: form.note,
                 });
                 // 新規作成時、在籍部員全員の支払いレコードを自動生成
-                await createPaymentsForEvent(created.id);
+                await createPaymentsForFeeEvent(created.id);
             }
             setShowModal(false);
             loadEvents();
