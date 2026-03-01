@@ -48,22 +48,23 @@ export default function SignUpPage() {
 
             const userId = authData.user.id;
 
-            // チーム作成
-            const { data: team, error: teamError } = await supabase
-                .from('teams')
-                .insert({ name: form.teamName })
-                .select()
-                .single();
+            // チームの UUID をクライアント側で生成（INSERT 後の SELECT を回避するため）
+            const teamId = crypto.randomUUID();
 
-            if (teamError || !team) throw new Error('チーム作成に失敗しました');
+            // チーム作成（.select() を使わず、事前生成した teamId を使用）
+            const { error: teamError } = await supabase
+                .from('teams')
+                .insert({ id: teamId, name: form.teamName });
+
+            if (teamError) throw new Error(`チーム作成に失敗しました: ${teamError.message}`);
 
             // プロフィールに管理者ロールとチームを設定
             const { error: profileError } = await supabase
                 .from('profiles')
-                .update({ team_id: team.id, role: 'admin', display_name: form.displayName })
+                .update({ team_id: teamId, role: 'admin', display_name: form.displayName })
                 .eq('id', userId);
 
-            if (profileError) throw new Error('プロフィール設定に失敗しました');
+            if (profileError) throw new Error(`プロフィール設定に失敗しました: ${profileError.message}`);
 
             setStep('done');
         } catch (err: unknown) {

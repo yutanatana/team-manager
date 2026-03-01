@@ -1,14 +1,28 @@
 -- ==================================================
--- 部費管理アプリ データベーススキーマ (Phase 2: 認証・マルチテナント対応)
+-- 部費管理アプリ 完全版スキーマ（RLS ポリシー修正済み）
+-- ==================================================
+-- 手順: このファイルの内容を Supabase SQL エディタに貼り付けて実行してください
 -- ==================================================
 
 -- UUID 拡張を有効化
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ==================================================
+-- 既存テーブル・トリガー・関数を削除（リセット）
+-- ==================================================
+DROP TABLE IF EXISTS payments CASCADE;
+DROP TABLE IF EXISTS fee_events CASCADE;
+DROP TABLE IF EXISTS expenses CASCADE;
+DROP TABLE IF EXISTS members CASCADE;
+DROP TABLE IF EXISTS profiles CASCADE;
+DROP TABLE IF EXISTS teams CASCADE;
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP FUNCTION IF EXISTS handle_new_user();
+
+-- ==================================================
 -- teams テーブル（チーム/テナント）
 -- ==================================================
-CREATE TABLE IF NOT EXISTS teams (
+CREATE TABLE teams (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -17,7 +31,7 @@ CREATE TABLE IF NOT EXISTS teams (
 -- ==================================================
 -- profiles テーブル（auth.users と 1:1 で紐づく）
 -- ==================================================
-CREATE TABLE IF NOT EXISTS profiles (
+CREATE TABLE profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
   role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
@@ -28,7 +42,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 -- ==================================================
 -- members テーブル（部員情報）
 -- ==================================================
-CREATE TABLE IF NOT EXISTS members (
+CREATE TABLE members (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -43,7 +57,7 @@ CREATE TABLE IF NOT EXISTS members (
 -- ==================================================
 -- fee_events テーブル（徴収イベント）
 -- ==================================================
-CREATE TABLE IF NOT EXISTS fee_events (
+CREATE TABLE fee_events (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
@@ -56,7 +70,7 @@ CREATE TABLE IF NOT EXISTS fee_events (
 -- ==================================================
 -- payments テーブル（支払い記録）
 -- ==================================================
-CREATE TABLE IF NOT EXISTS payments (
+CREATE TABLE payments (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   member_id UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
@@ -71,7 +85,7 @@ CREATE TABLE IF NOT EXISTS payments (
 -- ==================================================
 -- expenses テーブル（支出）
 -- ==================================================
-CREATE TABLE IF NOT EXISTS expenses (
+CREATE TABLE expenses (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   date DATE NOT NULL,
@@ -85,13 +99,13 @@ CREATE TABLE IF NOT EXISTS expenses (
 -- ==================================================
 -- インデックス
 -- ==================================================
-CREATE INDEX IF NOT EXISTS idx_members_team_id ON members(team_id);
-CREATE INDEX IF NOT EXISTS idx_fee_events_team_id ON fee_events(team_id);
-CREATE INDEX IF NOT EXISTS idx_payments_member_id ON payments(member_id);
-CREATE INDEX IF NOT EXISTS idx_payments_fee_event_id ON payments(fee_event_id);
-CREATE INDEX IF NOT EXISTS idx_payments_team_id ON payments(team_id);
-CREATE INDEX IF NOT EXISTS idx_expenses_team_id ON expenses(team_id);
-CREATE INDEX IF NOT EXISTS idx_profiles_team_id ON profiles(team_id);
+CREATE INDEX idx_members_team_id ON members(team_id);
+CREATE INDEX idx_fee_events_team_id ON fee_events(team_id);
+CREATE INDEX idx_payments_member_id ON payments(member_id);
+CREATE INDEX idx_payments_fee_event_id ON payments(fee_event_id);
+CREATE INDEX idx_payments_team_id ON payments(team_id);
+CREATE INDEX idx_expenses_team_id ON expenses(team_id);
+CREATE INDEX idx_profiles_team_id ON profiles(team_id);
 
 -- ==================================================
 -- Row Level Security (RLS) の有効化
@@ -106,6 +120,10 @@ ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
 -- ==================================================
 -- RLS ポリシー: teams
 -- ==================================================
+-- 認証済みユーザーはチームを新規作成できる（チーム作成 = 初回オンボーディング）
+CREATE POLICY "teams_insert" ON teams
+  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
 -- 自分が所属するチームのみ参照可能
 CREATE POLICY "teams_select" ON teams
   FOR SELECT USING (
@@ -121,21 +139,23 @@ CREATE POLICY "teams_update" ON teams
     )
   );
 
--- =================================================
+-- ==================================================
 -- RLS ポリシー: profiles
 -- ==================================================
 -- 同じチームのプロフィールを参照可能
 CREATE POLICY "profiles_select" ON profiles
   FOR SELECT USING (
     team_id IN (SELECT team_id FROM profiles WHERE id = auth.uid())
+    OR id = auth.uid()  -- 自分のプロフィールは常に参照可能（未所属時も）
   );
 
--- 自分のプロフィールのみ更新可能
+-- 自分のプロフィールのみ更新可能（team_id・role の設定を含む）
 CREATE POLICY "profiles_update" ON profiles
-  FOR UPDATE USING (id = auth.uid());
+  FOR UPDATE USING (id = auth.uid())
+  WITH CHECK (id = auth.uid());
 
 -- ==================================================
--- RLS ポリシー: members（チーム単位でアクセス制御）
+-- RLS ポリシー: members
 -- ==================================================
 CREATE POLICY "members_select" ON members
   FOR SELECT USING (
@@ -255,18 +275,31 @@ CREATE POLICY "expenses_delete" ON expenses
   );
 
 -- ==================================================
--- 新規ユーザー登録時に profiles レコードを自動作成するトリガー
--- （signup 後に別途 team_id と role を設定する）
+-- 新規ユーザー登録時に profiles レコードを自動作成するトリガー関数
+-- SECURITY DEFINER + SET row_security = off で RLS をバイパス
 -- ==================================================
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO profiles (id, display_name)
-  VALUES (NEW.id, COALESCE(NEW.raw_user_meta_data->>'display_name', ''));
+  INSERT INTO public.profiles (id, display_name)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data->>'display_name', '')
+  )
+  ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
+EXCEPTION
+  WHEN OTHERS THEN
+    -- エラーが起きても auth.users の作成は完了させる
+    RAISE WARNING 'handle_new_user エラー: % %', SQLERRM, SQLSTATE;
+    RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql
+   SECURITY DEFINER
+   SET search_path = public
+   SET row_security = off;
 
-CREATE OR REPLACE TRIGGER on_auth_user_created
+-- トリガーを登録
+CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
