@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { redirect } from 'next/navigation';
 import type { Profile } from '@/types/database';
 
@@ -18,6 +19,8 @@ export async function signOut(): Promise<void> {
 }
 
 // チームを作成して管理者として登録
+// メール確認前のユーザーでも teams / profiles を操作できるよう
+// service_role キーを使った管理者用クライアントを使用する
 export async function signUpWithTeam(
     email: string,
     password: string,
@@ -26,7 +29,7 @@ export async function signUpWithTeam(
 ): Promise<void> {
     const supabase = await createClient();
 
-    // ユーザー作成
+    // ユーザー作成（anon クライアントで OK）
     const { data: authData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
@@ -38,8 +41,11 @@ export async function signUpWithTeam(
 
     const userId = authData.user.id;
 
+    // 管理者用クライアント（RLS をバイパス）でチーム・プロフィールを操作
+    const adminClient = createAdminClient();
+
     // チーム作成
-    const { data: team, error: teamError } = await supabase
+    const { data: team, error: teamError } = await adminClient
         .from('teams')
         .insert({ name: teamName })
         .select()
@@ -50,7 +56,7 @@ export async function signUpWithTeam(
     }
 
     // プロフィールにチームと管理者ロールを設定
-    const { error: profileError } = await supabase
+    const { error: profileError } = await adminClient
         .from('profiles')
         .update({ team_id: team.id, role: 'admin', display_name: displayName })
         .eq('id', userId);

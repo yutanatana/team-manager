@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase';
+import { signUpWithTeam } from '@/app/actions/auth';
 
 export default function SignUpPage() {
     const router = useRouter();
@@ -34,38 +34,8 @@ export default function SignUpPage() {
         setLoading(true);
 
         try {
-            const supabase = createClient();
-
-            // ユーザー作成
-            const { data: authData, error: signUpError } = await supabase.auth.signUp({
-                email: form.email,
-                password: form.password,
-                options: { data: { display_name: form.displayName } },
-            });
-            if (signUpError || !authData.user) {
-                throw new Error(signUpError?.message ?? 'アカウント作成に失敗しました');
-            }
-
-            const userId = authData.user.id;
-
-            // チームの UUID をクライアント側で生成（INSERT 後の SELECT を回避するため）
-            const teamId = crypto.randomUUID();
-
-            // チーム作成（.select() を使わず、事前生成した teamId を使用）
-            const { error: teamError } = await supabase
-                .from('teams')
-                .insert({ id: teamId, name: form.teamName });
-
-            if (teamError) throw new Error(`チーム作成に失敗しました: ${teamError.message}`);
-
-            // プロフィールに管理者ロールとチームを設定
-            const { error: profileError } = await supabase
-                .from('profiles')
-                .update({ team_id: teamId, role: 'admin', display_name: form.displayName })
-                .eq('id', userId);
-
-            if (profileError) throw new Error(`プロフィール設定に失敗しました: ${profileError.message}`);
-
+            // Server Action 経由でチーム作成（service_role で RLS をバイパス）
+            await signUpWithTeam(form.email, form.password, form.displayName, form.teamName);
             setStep('done');
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : '登録に失敗しました';
