@@ -275,6 +275,49 @@ CREATE POLICY "expenses_delete" ON expenses
   );
 
 -- ==================================================
+-- join_requests テーブル（チーム参加申請）
+-- ==================================================
+CREATE TABLE join_requests (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, team_id)
+);
+
+CREATE INDEX idx_join_requests_team_id ON join_requests(team_id);
+CREATE INDEX idx_join_requests_user_id ON join_requests(user_id);
+
+ALTER TABLE join_requests ENABLE ROW LEVEL SECURITY;
+
+-- ==================================================
+-- RLS ポリシー: join_requests
+-- ==================================================
+-- 認証済みユーザーなら誰でも参加申請を作成できる
+CREATE POLICY "join_requests_insert" ON join_requests
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- 申請者本人 OR そのチームの管理者が参照可能
+CREATE POLICY "join_requests_select" ON join_requests
+  FOR SELECT USING (
+    user_id = auth.uid()
+    OR team_id IN (
+      SELECT team_id FROM profiles
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- チームの管理者のみ承認/拒否（UPDATE）可能
+CREATE POLICY "join_requests_update" ON join_requests
+  FOR UPDATE USING (
+    team_id IN (
+      SELECT team_id FROM profiles
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- ==================================================
 -- 新規ユーザー登録時に profiles レコードを自動作成するトリガー関数
 -- SECURITY DEFINER + SET row_security = off で RLS をバイパス
 -- ==================================================

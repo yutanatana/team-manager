@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { signUpWithTeam } from '@/app/actions/auth';
+import { signUp } from '@/app/actions/auth';
 
 export default function SignUpPage() {
     const router = useRouter();
@@ -12,7 +12,6 @@ export default function SignUpPage() {
         password: '',
         confirmPassword: '',
         displayName: '',
-        teamName: '',
     });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -34,8 +33,8 @@ export default function SignUpPage() {
         setLoading(true);
 
         try {
-            // Server Action 経由でチーム作成（service_role で RLS をバイパス）
-            await signUpWithTeam(form.email, form.password, form.displayName, form.teamName);
+            // 個人アカウントのみ作成（チームは後で設定）
+            await signUp(form.email, form.password, form.displayName);
             setStep('done');
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : '登録に失敗しました';
@@ -73,9 +72,9 @@ export default function SignUpPage() {
         <div className="auth-page">
             <div className="auth-card">
                 <div className="auth-header">
-                    <div className="auth-logo">🏆</div>
-                    <h1 className="auth-title">新規チーム作成</h1>
-                    <p className="auth-subtitle">管理者アカウントとチームを同時に作成</p>
+                    <div className="auth-logo">👤</div>
+                    <h1 className="auth-title">アカウント作成</h1>
+                    <p className="auth-subtitle">まずは個人アカウントを作成します</p>
                 </div>
 
                 {error && (
@@ -84,18 +83,7 @@ export default function SignUpPage() {
 
                 <form onSubmit={handleSignUp} className="auth-form">
                     <div className="form-group">
-                        <label className="form-label">チーム名 *</label>
-                        <input
-                            type="text"
-                            className="form-input"
-                            value={form.teamName}
-                            onChange={e => setForm({ ...form, teamName: e.target.value })}
-                            placeholder="○○サッカークラブ"
-                            required
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label className="form-label">お名前（管理者）*</label>
+                        <label className="form-label">お名前 *</label>
                         <input
                             type="text"
                             className="form-input"
@@ -112,7 +100,7 @@ export default function SignUpPage() {
                             className="form-input"
                             value={form.email}
                             onChange={e => setForm({ ...form, email: e.target.value })}
-                            placeholder="admin@example.com"
+                            placeholder="example@email.com"
                             required
                             autoComplete="email"
                         />
@@ -148,7 +136,7 @@ export default function SignUpPage() {
                         className="btn btn-primary btn-full"
                         disabled={loading}
                     >
-                        {loading ? '作成中...' : 'チームを作成する'}
+                        {loading ? '作成中...' : 'アカウントを作成'}
                     </button>
                 </form>
 

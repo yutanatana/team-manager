@@ -7,7 +7,7 @@ export async function middleware(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
     // 認証不要のパス（Supabase が未設定でも常にアクセス可）
-    const publicPaths = ['/login', '/signup'];
+    const publicPaths = ['/login', '/signup', '/onboarding'];
     const isPublicPath = publicPaths.some(p => pathname.startsWith(p));
 
     // 環境変数が未設定の場合はデプロイ設定の問題のため、publicPath 以外はリダイレクト
